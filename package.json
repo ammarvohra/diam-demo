@@ -3,9 +3,13 @@
   "scripts": {},
   "main": "index.mjs",
   "dependencies": {
+    "axios": "^1.9.0",
     "cors": "^2.8.5",
+    "diamante-hd-wallet": "^1.0.8",
     "diamnet-sdk": "^1.0.2",
     "express": "^4.18.2",
+    "form-data": "^4.0.2",
+    "fs": "^0.0.1-security",
     "ipfs-http-client": "^60.0.1",
     "multer": "^1.4.5-lts.1",
     "web3": "^4.9.0",

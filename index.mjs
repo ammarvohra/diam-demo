@@ -3,6 +3,10 @@ import bodyParser from "body-parser";
 import cors from "cors";
 import multer from "multer";
 import { create } from "ipfs-http-client";
+import fs from "fs";
+import DiamanteHDWallet from "diamante-hd-wallet";
+import axios from 'axios';
+import FormData from 'form-data';
 import {
   Keypair,
   BASE_FEE,
@@ -23,7 +27,7 @@ app.use(cors()); // Enable CORS for all routes
 const upload = multer({ storage: multer.memoryStorage() });
 
 // Create an IPFS client
-const ipfs = create({ url: "https://uploadipfs.diamcircle.io" });
+const ipfs = create({ url: "https://ipfs.io" });
 
 app.use(cors());
 app.use(express.static("public"));
@@ -152,7 +156,7 @@ app.post("/TransferNft", async (req, res) => {
 
   const server = new Aurora.Server("https://diamtestnet.diamcircle.io/");
 
-  const TokenAsset = new Asset("headnft11", issuingKeys.publicKey());
+  const TokenAsset = new Asset("AstroDollar", issuingKeys.publicKey());
 
   // Load the user's account data from the Diamnet server
   const distAccount = await server.loadAccount(distributionKeys.publicKey());
@@ -202,7 +206,7 @@ app.post("/TransferNft", async (req, res) => {
         // Because Diamante allows transaction in many currencies, you must
         // specify the asset type. The special "native" asset represents Lumens.
         asset: TokenAsset,
-        amount: "1",
+        amount: "0.01",
       })
     )
     .setTimeout(100)
@@ -232,24 +236,25 @@ app.post("/FundAccount", async (req, res) => {
   const distributionKeys = Keypair.fromSecret(
     "SC2O6MJQVULBDONQJVAPL6A4KQYCWKY67ZFZLDOPSZ7YS7Y57LANZ5VE"
   );
+  console.log("Distribution Key", distributionKeys.publicKey());
 
   const server = new Aurora.Server("https://diamtestnet.diamcircle.io/");
 
-  try {
-    const response = await fetch(
-      `https://friendbot.diamcircle.io?addr=${encodeURIComponent(
-        distributionKeys.publicKey()
-      )}`
-    );
-    const responseJSON = await response.json();
-    console.log("SUCCESS! You have a new account :)\n", responseJSON);
-  } catch (e) {
-    console.error("ERROR!", e);
-  }
+  // try {
+  //   const response = await fetch(
+  //     `https://friendbot.diamcircle.io?addr=${encodeURIComponent(
+  //       distributionKeys.publicKey()
+  //     )}`
+  //   );
+  //   const responseJSON = await response.json();
+  //   console.log("SUCCESS! You have a new account :)\n", responseJSON);
+  // } catch (e) {
+  //   console.error("ERROR!", e);
+  // }
 
   try {
     var parentAccount = await server.loadAccount(distributionKeys.publicKey()); //make sure the parent account exists on ledger
-    const receivingKeys = Keypair.fromPublicKey("GAQ46WMFDGGXP2BV7K63EOCEBBA2ENGWHROR2IWCWDVP4BCKNZ5OOOPE");
+    const receivingKeys = Keypair.fromPublicKey("GDRW4SPRUQ6R7FEFR4UPUH5WABXX3SNLDJY32KWI52DSHGO5BKOOX3TT");
     //create a transacion object.
     var createAccountTx = new TransactionBuilder(parentAccount, {
       fee: BASE_FEE,
@@ -260,7 +265,7 @@ app.post("/FundAccount", async (req, res) => {
       .addOperation(
         Operation.createAccount({
           destination: receivingKeys.publicKey(),
-          startingBalance: "0.0000001",
+          startingBalance: "0.0001",
         })
       )
       .setTimeout(180)
@@ -286,6 +291,357 @@ app.post("/FundAccount", async (req, res) => {
 
 });
 
+app.get("/Stream", async (req, res) => {
+  try {
+    // Choose one of the following streaming methods:
+
+    // 1. Stream all transactions
+    const allTxStream = streamAllTransactions();
+
+    // 2. Stream transactions for a specific account (uncomment to use)
+    // const accountId = 'YOUR_ACCOUNT_PUBLIC_KEY';
+    // const accountTxStream = streamAccountTransactions(accountId);
+
+    // 3. Stream with robust reconnection (uncomment to use)
+    // const robustTxStream = createRobustStream(() => streamAllTransactions());
+
+    // 4. Stream with filtering (uncomment to use)
+    // const filteredTxStream = streamFilteredTransactions(multiOpFilter);
+
+    // Setup graceful shutdown on process termination
+    process.on("SIGINT", () => {
+      console.log("Shutting down transaction streams...");
+      closeStream(allTxStream);
+      // closeStream(accountTxStream);
+      // closeStream(robustTxStream);
+      // closeStream(filteredTxStream);
+      process.exit(0);
+    });
+
+    console.log("Streaming active. Press Ctrl+C to stop.");
+  } catch (error) {
+    console.error("Error in main function:", error);
+  }
+});
+
+// Function to handle stream errors
+function handleError(error) {
+  console.error("Error in stream:", error);
+  // You might implement reconnection logic here
+}
+
+// Function to close streams
+function closeStream(stream) {
+  if (stream) {
+    stream.close();
+    console.log("Stream closed");
+  }
+}
+
+/*
+  * Stream all transactions fromt he network
+    * @returns { Object } The transaction stream object
+      */
+function streamAllTransactions() {
+  console.log("Starting transactions stream for all transactions");
+  const server = new Aurora.Server("https://diamtestnet.diamcircle.io/");
+
+  const txStream = server
+    .transactions()
+    .cursor(16302905581637632) // Start from now // or paging token
+    // .limit(200) // Optional limit
+    .stream({
+      onmessage: (tx) => {
+        console.log("=== New Transaction ===");
+        console.log(`ID: ${tx.id}`);
+        console.log(`Source account: ${tx.source_account}`);
+        console.log(`Created at: ${tx.created_at}`);
+        console.log(`Fee charged: ${tx.fee_charged}`);
+        console.log(`Operation count: ${tx.operation_count}`);
+        console.log(`Memo type: ${tx.memo_type}`);
+        console.log(`Paging Token: ${tx.paging_token}`);
+
+        // If there's a memo, log it
+        if (tx.memo && tx.memo !== "none") {
+          console.log(`Memo: ${tx.memo}`);
+        }
+
+        // You can fetch the operations in this transaction for more details
+        server
+          .operations()
+          .forTransaction(tx.id)
+          .call()
+          .then((ops) => {
+            console.log(`Operations in transaction ${tx.id}:`);
+            ops.records.forEach((op) => {
+              console.log(`- Type: ${op.type}`);
+
+              // Log specific details based on operation type
+              switch (op.type) {
+                case "payment":
+                  console.log(`  Amount: ${op.amount} ${op.asset_type}`);
+                  console.log(`  From: ${op.from}`);
+                  console.log(`  To: ${op.to}`);
+                  break;
+                case "create_account":
+                  console.log(`  Account: ${op.account}`);
+                  console.log(`  Starting balance: ${op.starting_balance}`);
+                  break;
+                case "manage_sell_offer":
+                case "manage_buy_offer":
+                  console.log(`  Amount: ${op.amount}`);
+                  console.log(`  Price: ${op.price}`);
+                  console.log(`  Selling: ${op.selling_asset_type}`);
+                  console.log(`  Buying: ${op.buying_asset_type}`);
+                  break;
+                // Add more cases as needed
+              }
+            });
+          })
+          .catch((err) => console.error("Error fetching operations:", err));
+      },
+      onerror: handleError,
+    });
+
+  return txStream;
+}
+
+//Create NFT
+app.post("/CreateNewNft", upload.single("file"), async (req, res) => {
+  try {
+    const { assetNames, files, quantity } = req.body;
+
+    if (assetNames.length !== files.length) throw new Error("Length Mismatch between asset names and files");
+
+    const assetCIDs = await Promise.all(
+      files.map(async (file) => {
+        const cid = await uploadToPinata(file);
+        return cid;
+      })
+    );
+    const server = new Aurora.Server("https://diamtestnet.diamcircle.io/");
+
+    //HeadNFT: Public: GAYOQNFMSRNZTYIPDZQR6S3S3ARENTFVDAHOJ2Y3PH72BEH4SWOUZDGX Private: SBXLQZFWI7Z3KM47YNM5NUTWAAJDK4LNYYV4HVAB6CZL76ABIGMZJNKJ
+    //GenesisOG: Public: GDC5ZVFTNAJ333P5IDIQ7CQBAA4F4HKPVFQUD2WNMTKPZ3YFE24TRW7F Private: SB4MXWROQVBVIIFGNW77UIPKPYNMFR4F5H5OVETYUEQODPXIKOH7EPUM
+    //GenesisP2A: Public: GD4537PETYLVFDOI6QPAMM2U62WGJ4C4UT7P62PKQTXQUQIIGC4ESVCN Private: SBKBI6OVATQIUQAGLDRCKYYTL7OC7H5PFMH2IJXCNVVZNNDONXOSRUAO
+    // Keys for accounts to issue and receive the new asset
+    const issuingKeys = Keypair.fromSecret(
+      "SBKBI6OVATQIUQAGLDRCKYYTL7OC7H5PFMH2IJXCNVVZNNDONXOSRUAO"
+    );
+    //Dist account: Public: GCNE6ZBMQIUY5RSZWQ2WGHRMDV7KNYZDEVPAC44I44MBHNUBSNPK2RID Private: SAWF4X3PXNI4UXPN255BX5BSWHDGPNQA43FJ25VCLAVD44XZYWMYDWZB
+    const distributionKeys = Keypair.fromSecret(
+      "SAWF4X3PXNI4UXPN255BX5BSWHDGPNQA43FJ25VCLAVD44XZYWMYDWZB"
+    );
+    const issuerAccount = await server.loadAccount(issuingKeys.publicKey());
+    const distAccount = await server.loadAccount(distributionKeys.publicKey());
+
+    // Create NFT assets
+    const newNFTs = assetNames.map((name) => new Asset(name, issuingKeys.publicKey()));
+
+    let trustTransactionBuilder = new TransactionBuilder(distAccount, {
+      fee: BASE_FEE,
+      networkPassphrase: Networks.TESTNET,
+    });
+
+    let trustlinesNeeded = false;
+
+    // Iterate through each asset and check trustline
+    for (let nft of newNFTs) {
+      let hasTrustline = distAccount.balances.some(
+        (line) => line.asset_code === nft.code && line.asset_issuer === nft.issuer
+      );
+
+      // If trustline is missing, add an operation
+      if (!hasTrustline) {
+        trustTransactionBuilder.addOperation(
+          Operation.changeTrust({
+            asset: nft,
+          })
+        );
+        trustlinesNeeded = true;
+      }
+    }
+
+    // If there are trustlines to create, build and submit the transaction
+    if (trustlinesNeeded) {
+      let trustTransaction = trustTransactionBuilder.setTimeout(100).build();
+
+      trustTransaction.sign(distributionKeys);
+      await server.submitTransaction(trustTransaction);
+      console.log("Trustlines created successfully");
+    } else {
+      console.log("All trustlines already exist.");
+    }
+
+    // Store asset metadata
+    let manageDataTransactionBuilder = new TransactionBuilder(issuerAccount, {
+      fee: BASE_FEE,
+      networkPassphrase: Networks.TESTNET,
+    });
+
+    for (let index = 0; index < assetNames.length; index++) {
+      manageDataTransactionBuilder.addOperation(
+        Operation.manageData({
+          name: assetNames[index],
+          source: issuingKeys.publicKey(),
+          value: assetCIDs[index],
+        })
+      );
+    }
+    let manageDataTx = manageDataTransactionBuilder.setTimeout(100).build();
+    manageDataTx.sign(issuingKeys);
+    await server.submitTransaction(manageDataTx);
+    console.log("Manage Data Transaction Successful");
+
+    //Payment Trasaction
+    let paymentTransactionBuilder = new TransactionBuilder(issuerAccount, {
+      fee: BASE_FEE,
+      networkPassphrase: Networks.TESTNET,
+    });
+
+    newNFTs.forEach((nft) => {
+      paymentTransactionBuilder.addOperation(
+        Operation.payment({
+          asset: nft,
+          destination: distributionKeys.publicKey(),
+          amount: quantity,
+        })
+      );
+    });
+    let paymentTx = paymentTransactionBuilder.setTimeout(100).build();
+    paymentTx.sign(issuingKeys);
+    await server.submitTransaction(paymentTx);
+    console.log("Transfer Data Transaction Successful");
+
+    res.status(200).json({
+      message: "Transaction Success",
+      asset: newNFTs
+    });
+  } catch (error) {
+    console.error("Error:", error);
+    res.status(500).json({ error: "Error while doing operations" });
+  }
+});
+
+app.get("/GetAccount", async (req, res) => {
+  try {
+    const server = new Aurora.Server("https://diamtestnet.diamcircle.io/");
+    const { mnemonic } = req.body;
+    console.log(mnemonic);
+    // const mnemonic = "plunge bulb base wisdom video only rent year body surprise blade gain";
+    // Keys for accounts to issue and receive the new asset
+    const wallet = DiamanteHDWallet.fromMnemonic(mnemonic);
+
+    console.log("Account Public Key", wallet.getPublicKey(0));
+    console.log("Account Private Key", wallet.getSecret(0));
+  } catch (error) {
+    console.error("Error in  function:", error);
+  }
+});
+
+app.get("/GetCID", async (req, res) => {
+  try {
+    const { hash } = req.body;
+    console.log(hash);
+    const decodedValue = Buffer.from(hash, "base64").toString("utf-8");
+    console.log("CID of image", decodedValue);
+  } catch (error) {
+    console.error("Error in  function:", error);
+  }
+});
+
+async function uploadToPinata(filePath) {
+  const API_KEY = '9cb95851ecb818131ec3';
+  const API_SECRET = '39bf17c15d382c38422daa23f704e7196507f5d9d05abc59a81ce4cad7dc6f0a';
+
+  const url = 'https://api.pinata.cloud/pinning/pinFileToIPFS';
+  const formData = new FormData();
+
+  formData.append('file', fs.createReadStream(filePath));
+
+  const headers = {
+    'pinata_api_key': API_KEY,
+    'pinata_secret_api_key': API_SECRET,
+    ...formData.getHeaders(),
+  };
+
+  try {
+    const response = await axios.post(url, formData, { headers });
+    console.log(`File uploaded successfully! CID: ${response.data.IpfsHash}`);
+    return response.data.IpfsHash;
+  } catch (error) {
+    console.error('Error uploading file to Pinata:', error);
+  }
+}
+
+
+//Create NFT
+app.post("/CreateTrustLine", async (req, res) => {
+  try {
+    const { assetNames } = req.body;
+
+    const server = new Aurora.Server("https://diamtestnet.diamcircle.io/");
+
+    //HeadNFT: Public: GAYOQNFMSRNZTYIPDZQR6S3S3ARENTFVDAHOJ2Y3PH72BEH4SWOUZDGX Private: SBXLQZFWI7Z3KM47YNM5NUTWAAJDK4LNYYV4HVAB6CZL76ABIGMZJNKJ
+    //GenesisOG: Public: GDC5ZVFTNAJ333P5IDIQ7CQBAA4F4HKPVFQUD2WNMTKPZ3YFE24TRW7F Private: SB4MXWROQVBVIIFGNW77UIPKPYNMFR4F5H5OVETYUEQODPXIKOH7EPUM
+    //GenesisP2A: Public: GD4537PETYLVFDOI6QPAMM2U62WGJ4C4UT7P62PKQTXQUQIIGC4ESVCN Private: SBKBI6OVATQIUQAGLDRCKYYTL7OC7H5PFMH2IJXCNVVZNNDONXOSRUAO
+    // Keys for accounts to issue and receive the new asset
+    const issuingKeys = Keypair.fromSecret(
+      "SBXLQZFWI7Z3KM47YNM5NUTWAAJDK4LNYYV4HVAB6CZL76ABIGMZJNKJ"
+    );
+    //Dist account: Public: GCNE6ZBMQIUY5RSZWQ2WGHRMDV7KNYZDEVPAC44I44MBHNUBSNPK2RID Private: SAWF4X3PXNI4UXPN255BX5BSWHDGPNQA43FJ25VCLAVD44XZYWMYDWZB
+    const distributionKeys = Keypair.fromSecret(
+      "SBYXUBAGUWNNIH7OQJ5TPMZY2QW3EQEQGQIJB2LOSTRZOEQ33RPI56UW"
+    );
+    const issuerAccount = await server.loadAccount(issuingKeys.publicKey());
+    const distAccount = await server.loadAccount(distributionKeys.publicKey());
+
+    // Create NFT assets
+    const newNFTs = assetNames.map((name) => new Asset(name, issuingKeys.publicKey()));
+
+    let trustTransactionBuilder = new TransactionBuilder(distAccount, {
+      fee: BASE_FEE,
+      networkPassphrase: Networks.TESTNET,
+    });
+
+    let trustlinesNeeded = false;
+
+    // Iterate through each asset and check trustline
+    for (let nft of newNFTs) {
+      let hasTrustline = distAccount.balances.some(
+        (line) => line.asset_code === nft.code && line.asset_issuer === nft.issuer
+      );
+
+      // If trustline is missing, add an operation
+      if (!hasTrustline) {
+        trustTransactionBuilder.addOperation(
+          Operation.changeTrust({
+            asset: nft,
+          })
+        );
+        trustlinesNeeded = true;
+      }
+    }
+
+    // If there are trustlines to create, build and submit the transaction
+    if (trustlinesNeeded) {
+      let trustTransaction = trustTransactionBuilder.setTimeout(100).build();
+
+      trustTransaction.sign(distributionKeys);
+      await server.submitTransaction(trustTransaction);
+      console.log("Trustlines created successfully");
+    } else {
+      console.log("All trustlines already exist.");
+    }
+
+    res.status(200).json({
+      message: "Transaction Success"
+    });
+  } catch (error) {
+    console.error("Error:", error);
+    res.status(500).json({ error: "Error while doing operations" });
+  }
+});
 
 app.listen(port, () => {
   console.log(`Server running on http://localhost:${port}`);
